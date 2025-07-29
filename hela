@@ -1,0 +1,180 @@
+#!/bin/bash
+
+print_usage() {
+    echo "Hela - A Fastboot-style CLI for Odin"
+    echo ""
+    echo "Usage:"
+    echo "  hela flash [partition] [image] ...     -> Flash specified image(s)"
+    echo "  hela erase [partition]                -> Erase the given partition (PIT + /dev/zero)"
+    echo "  hela -w                                -> Wipe userdata, cache, metadata, and misc"
+    echo "  hela devices                           -> Detect connected device"
+    echo "  hela reboot                            -> Reboot device using close-pc-screen"
+    echo "  hela flashall                          -> Automatically flash all files in the current directory"
+    echo "  hela help                              -> Display this help menu"
+    echo ""
+}
+
+if [[ $# -lt 1 ]]; then
+    print_usage
+    exit 1
+fi
+
+cmd="$1"
+shift
+
+case "$cmd" in
+  flash)
+  if (( $# % 2 != 0 )); then
+    echo "Invalid usage: Each partition must be paired with a file."
+    exit 1
+  fi
+
+  if [[ -e /tmp/hela_last_flash ]]; then
+    RESUME_ARG="--resume"
+  else
+    RESUME_ARG=""
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    part="$1"
+    file="$2"
+    part_upper=$(echo "$part" | tr '[:lower:]' '[:upper:]')
+    size_kb=$(( $(stat -c%s "$file") / 1024 ))
+
+    echo -n "Flashing $file to $part_upper ... (${size_kb} KB)"
+    start=$(date +%s%N)
+
+    heimdall flash --${part_upper} "$file" --no-reboot $RESUME_ARG > /tmp/hela_out.log 2>&1
+    status=$?
+    end=$(date +%s%N)
+    duration=$(echo "scale=9; ($end - $start)/1000000000" | bc)
+
+    if grep -q "upload successful" /tmp/hela_out.log && [[ $status -eq 0 ]]; then
+      echo -e "\nOKAY [finished. total time: ${duration}s]"
+    else
+      echo -e "\nFAILED"
+      cat /tmp/hela_out.log
+    fi
+
+    shift 2
+  done
+
+  touch /tmp/hela_last_flash
+  ;;
+
+  erase)
+    if [[ -z "$1" ]]; then
+      echo "Usage: hela erase [partition]"
+      exit 1
+    fi
+    part_input="$1"
+    part_upper=$(echo "$part_input" | tr '[:lower:]' '[:upper:]')
+    echo "[*] Preparing to erase '$part_input'..."
+
+    if [[ -e /tmp/hela_last_flash ]]; then
+      heimdall print-pit --no-reboot --resume > /tmp/pit.txt
+    else
+      heimdall print-pit --no-reboot > /tmp/pit.txt
+      touch /tmp/hela_last_flash
+    fi
+
+    block_count=$(awk -v name="$part_upper" 'BEGIN{IGNORECASE=1} $0 ~ "Partition Name: "name {found=1} found && /Partition Block Count:/ {print $4; exit}' /tmp/pit.txt)
+
+    if [[ -z "$block_count" ]]; then
+        echo "[-] Partition '$part_input' not found."
+        rm -f /tmp/pit.txt
+        exit 1
+    fi
+
+    dd if=/dev/zero of=/tmp/zerofile bs=512 count=$block_count &>/dev/null
+
+    echo "[*] Flashing zero data to $part_upper..."
+    heimdall flash --$part_upper /tmp/zerofile --no-reboot --resume &> /dev/null && echo "OKAY" || echo "FAILED"
+
+    rm -f /tmp/pit.txt /tmp/zerofile
+    ;;
+
+  -w)
+    parts=(userdata cache metadata misc)
+    count=0
+
+    for p in "${parts[@]}"; do
+      echo "[*] Preparing to wipe: $p"
+      hela erase "$p" && ((count++)) || echo "[-] Partition '$p' not found, skipping."
+    done
+    echo "Wiped $count partition(s)."
+    ;;
+
+  devices)
+    lsusb | grep -i "04e8.*Download mode"
+    ;;
+
+  reboot)
+  echo -n "Rebooting device ... "
+  start_time=$(date +%s.%N)
+
+  if [[ -e /tmp/hela_last_flash ]]; then
+    heimdall close-pc-screen --resume &> /dev/null
+  else
+    heimdall close-pc-screen &> /dev/null
+  fi
+
+  end_time=$(date +%s.%N)
+  elapsed=$(echo "$end_time - $start_time" | bc)
+
+  echo
+  echo "OKAY [finished. total time: ${elapsed}s]"
+
+  rm -f /tmp/hela_last_flash
+  ;;
+
+  flashall)
+    echo "[*] Reading PIT info..."
+
+    if [[ -e /tmp/hela_last_flash ]]; then
+        heimdall print-pit --no-reboot --resume > /tmp/hela_pit.txt
+    else
+        heimdall print-pit --no-reboot > /tmp/hela_pit.txt
+        touch /tmp/hela_last_flash
+    fi
+
+    declare -a PARTITIONS
+    declare -a FILES
+
+    while read -r part flash; do
+        if [[ -f "$flash" ]]; then
+            PARTITIONS+=("$part")
+            FILES+=("$flash")
+        fi
+    done < <(awk -F ': ' 'BEGIN { IGNORECASE=1 } /Partition Name/ {p=$2} /Flash Filename/ {f=$2; if (p && f) { print p, f; p=""; f="" }}' /tmp/hela_pit.txt)
+
+    total=${#PARTITIONS[@]}
+    echo "[*] Flashing $total piece..."
+
+    for ((i=0; i<total; i++)); do
+        part=${PARTITIONS[$i]}
+        file=${FILES[$i]}
+        part_upper=$(echo "$part" | tr '[:lower:]' '[:upper:]')
+
+        echo -ne "Flashing $file to $part_upper... "
+
+        output=$(heimdall flash --$part_upper "$file" --no-reboot --resume 2>&1)
+
+        if echo "$output" | grep -q "upload successful"; then
+            echo "OKAY"
+        else
+            echo "FAILED"
+            rm -f /tmp/hela_pit.txt
+            exit 1
+        fi
+    done
+
+    echo "[+] Flashall completed."
+    rm -f /tmp/hela_pit.txt
+    ;;
+
+
+  help|*)
+    print_usage
+    ;;
+esac
