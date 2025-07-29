@@ -20,8 +20,11 @@ Usage:
 For install:
 
 git clone https://github.com/av2xn/Hela.git
+
 cd Hela
+
 chmod +x *
+
 ./setup.sh #sorry but setup.sh is turkhis .d
 
 For uninstall:
