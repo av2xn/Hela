@@ -52,4 +52,4 @@ sudo systemctl enable hela-watchdog.service > /dev/null
 sudo systemctl start hela-watchdog.service
 
 echo ""
-echo "[✓] Kurulum tamamlandı. Artık 'hela' komutu her yerde çalışır ve Watchdog servisi aktiftir."
+echo "[✓] Hela ready"
