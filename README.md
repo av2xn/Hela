@@ -44,5 +44,14 @@ chmod +x *
 ./setup.sh
 ```
 
+## 🛠 Installation (iinitt)
+
+```bash
+git clone https://github.com/av2xn/Hela.git
+cd Hela
+chmod +x *
+./setup-iinitt.sh
+```
+
 [XDA](https://xdaforums.com/t/tool-hela-fastboot-style-flashing-tool-for-samsung-heimdall-based-only-works-on-linux.4752037/)  
 [Technopat](https://www.technopat.net/sosyal/konu/hela-linux-uezerinde-calisan-samsung-flash-tool-hela.3862472/)
